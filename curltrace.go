@@ -1,91 +1,65 @@
-package curltrace
+package main
 
 import (
 	"context"
-	"crypto/tls"
-	"net/http/httptrace"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"time"
 
 	"go.elastic.co/apm"
+	"go.elastic.co/apm/module/apmhttp"
 )
 
-// result stores httpstat info.
-type result struct {
-	*apm.Transaction
-
-	DNS,
-	Connect,
-	TLS,
-	Server,
-	Transfer,
-	Total *apm.Span
-}
-
-func (r *result) End() {
-	if r.Transfer != nil {
-		r.Transfer.End()
-	}
-	if r.Total != nil {
-		r.Total.End()
+func flush(tracer *apm.Tracer) {
+	ctxFlush, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	flushed := make(chan struct{})
+	go func() {
+		defer close(flushed)
+		tracer.Flush(ctxFlush.Done())
+	}()
+	for {
+		select {
+		case <-time.After(50 * time.Millisecond):
+			log.Println("Waiting for transaction to be flushed...")
+		case <-flushed:
+			return
+		}
 	}
 }
 
-func WithClientTrace(ctx context.Context) (context.Context, func()) {
-	r := result{
-		Transaction: apm.TransactionFromContext(ctx),
+func main() {
+	kibana := flag.String("k", "http://localhost:5601", "kibana base path")
+	flag.Parse()
+	url := flag.Arg(0)
+	output := os.Stdout
+
+	client := http.DefaultClient
+	client.Transport = apmhttp.WrapRoundTripper(client.Transport, apmhttp.WithClientTrace())
+
+	tx := apm.DefaultTracer.StartTransaction("GET "+url, "request")
+	ctx := apm.ContextWithTransaction(context.Background(), tx)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	rsp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
 	}
+	defer rsp.Body.Close()
+	fmt.Println(rsp.Proto, rsp.Status)
+	io.Copy(output, rsp.Body)
+	fmt.Println()
 
-	return httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
-		DNSStart: func(i httptrace.DNSStartInfo) {
-			r.DNS = r.StartSpan("DNS Lookup", "http.dns", nil)
-		},
+	apmhttp.SetTransactionContext(tx, req, &apmhttp.Response{
+		StatusCode: rsp.StatusCode,
+		Headers:    rsp.Header,
+	}, nil)
 
-		DNSDone: func(i httptrace.DNSDoneInfo) {
-			r.DNS.End()
-		},
-
-		ConnectStart: func(_, _ string) {
-			r.Connect = r.StartSpan("Connect", "http.connect", nil)
-
-			if r.DNS == nil {
-				r.Transaction.Context.SetLabel("dns", false)
-			}
-		},
-
-		ConnectDone: func(network, addr string, err error) {
-			r.Connect.End()
-		},
-
-		TLSHandshakeStart: func() {
-			r.TLS = r.StartSpan("TLS Handshake", "http.tls", nil)
-			r.Transaction.Context.SetLabel("tls", true)
-		},
-
-		TLSHandshakeDone: func(_ tls.ConnectionState, _ error) {
-			r.TLS.End()
-		},
-
-		PutIdleConn: func(err error) {
-			r.Transaction.Context.SetLabel("conn_returned", err == nil)
-		},
-
-		GotConn: func(i httptrace.GotConnInfo) {
-			// Handle when keep alive is used and connection is reused.
-			// DNSStart(Done) and ConnectStart(Done) is skipped
-			r.Transaction.Context.SetLabel("conn_reused", true)
-		},
-
-		WroteRequest: func(info httptrace.WroteRequestInfo) {
-			r.Server = r.StartSpan("Server Processing", "http.server", nil)
-
-			// When connection is re-used, DNS/TCP/TLS hooks not called.
-			if r.Connect == nil {
-				// TODO
-			}
-		},
-
-		GotFirstResponseByte: func() {
-			r.Server.End()
-			r.Transfer = r.StartSpan("Transfer", "http.transfer", nil)
-		},
-	}), r.End
+	traceContext := tx.TraceContext()
+	tx.End()
+	flush(apm.DefaultTracer)
+	log.Printf("%s/app/apm#/link-to/trace/%s\n", *kibana, traceContext.Trace.String())
 }
