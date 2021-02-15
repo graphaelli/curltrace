@@ -7,7 +7,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"time"
 
 	"go.elastic.co/apm"
@@ -33,17 +35,30 @@ func flush(tracer *apm.Tracer) {
 }
 
 func main() {
-	kibana := flag.String("k", "http://localhost:5601", "kibana base path")
+	kibana := flag.String("K", "http://localhost:5601", "kibana base path")
+	method := flag.String("X", http.MethodGet, "HTTP method")
 	flag.Parse()
-	url := flag.Arg(0)
+	if flag.NArg() == 0 {
+		fmt.Printf("usage: %s [options] url\n", os.Args[0])
+		os.Exit(1)
+	}
+	dst := flag.Arg(0)
 	output := os.Stdout
 
 	client := http.DefaultClient
 	client.Transport = apmhttp.WrapRoundTripper(client.Transport, apmhttp.WithClientTrace())
 
-	tx := apm.DefaultTracer.StartTransaction("GET "+url, "request")
+	var base string
+	if parsed, err := url.Parse(dst); err == nil {
+		base = filepath.Join(parsed.Host, parsed.Path)
+	} else {
+		log.Printf("failed to parse destination url: %s", err)
+		base = dst
+	}
+
+	tx := apm.DefaultTracer.StartTransaction(fmt.Sprintf("%s %s", *method, base), "request")
 	ctx := apm.ContextWithTransaction(context.Background(), tx)
-	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, _ := http.NewRequestWithContext(ctx, *method, dst, nil)
 	rsp, err := client.Do(req)
 	if err != nil {
 		log.Fatal(err)
