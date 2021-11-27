@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"go.elastic.co/apm"
@@ -34,7 +36,32 @@ func flush(tracer *apm.Tracer) {
 	}
 }
 
+type headerFlag http.Header
+
+func (f headerFlag) String() string {
+	return ""
+}
+
+func (f headerFlag) Set(s string) error {
+	i := strings.IndexRune(s, '=')
+	if i < 0 {
+		return errors.New("missing '='; expected format k=v")
+	}
+	http.Header(f).Add(s[:i], s[i+1:])
+	return nil
+}
+
+func (f headerFlag) addTo(r *http.Request) {
+	for k, vs := range f {
+		for _, v := range vs {
+			r.Header.Add(k, v)
+		}
+	}
+}
+
 func main() {
+	headers := headerFlag(http.Header{})
+	flag.Var(headers, "H", "key=value header, can be passed more than once")
 	kibana := flag.String("K", "http://localhost:5601", "kibana base path")
 	method := flag.String("X", http.MethodGet, "HTTP method")
 	flag.Parse()
@@ -59,6 +86,7 @@ func main() {
 	tx := apm.DefaultTracer.StartTransaction(fmt.Sprintf("%s %s", *method, base), "request")
 	ctx := apm.ContextWithTransaction(context.Background(), tx)
 	req, _ := http.NewRequestWithContext(ctx, *method, dst, nil)
+	headers.addTo(req)
 	rsp, err := client.Do(req)
 	if err != nil {
 		log.Fatal(err)
