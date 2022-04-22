@@ -51,30 +51,21 @@ func (f headerFlag) Set(s string) error {
 	return nil
 }
 
-func (f headerFlag) addTo(r *http.Request) {
-	for k, vs := range f {
-		for _, v := range vs {
-			r.Header.Add(k, v)
-		}
+type client struct {
+	httpClient *http.Client
+	headers    http.Header
+}
+
+func newClient() *client {
+	httpClient := http.DefaultClient
+	httpClient.Transport = apmhttp.WrapRoundTripper(httpClient.Transport, apmhttp.WithClientTrace())
+
+	return &client{
+		httpClient: httpClient,
 	}
 }
 
-func main() {
-	headers := headerFlag(http.Header{})
-	flag.Var(headers, "H", "key=value header, can be passed more than once")
-	kibana := flag.String("K", "http://localhost:5601", "kibana base path")
-	method := flag.String("X", http.MethodGet, "HTTP method")
-	flag.Parse()
-	if flag.NArg() == 0 {
-		fmt.Printf("usage: %s [options] url\n", os.Args[0])
-		os.Exit(1)
-	}
-	dst := flag.Arg(0)
-	output := os.Stdout
-
-	client := http.DefaultClient
-	client.Transport = apmhttp.WrapRoundTripper(client.Transport, apmhttp.WithClientTrace())
-
+func (c *client) fetch(method, dst string) (string, error) {
 	var base string
 	if parsed, err := url.Parse(dst); err == nil {
 		base = filepath.Join(parsed.Host, parsed.Path)
@@ -83,18 +74,21 @@ func main() {
 		base = dst
 	}
 
-	tx := apm.DefaultTracer.StartTransaction(fmt.Sprintf("%s %s", *method, base), "request")
+	tx := apm.DefaultTracer.StartTransaction(fmt.Sprintf("%s %s", method, base), "request")
 	ctx := apm.ContextWithTransaction(context.Background(), tx)
-	req, _ := http.NewRequestWithContext(ctx, *method, dst, nil)
-	headers.addTo(req)
-	rsp, err := client.Do(req)
+	req, _ := http.NewRequestWithContext(ctx, method, dst, nil)
+	for k, vs := range c.headers {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
+	}
+
+	rsp, err := c.httpClient.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	defer rsp.Body.Close()
-	fmt.Println(rsp.Proto, rsp.Status)
-	io.Copy(output, rsp.Body)
-	fmt.Println()
+	io.Copy(io.Discard, rsp.Body)
 
 	apmhttp.SetTransactionContext(tx, req, &apmhttp.Response{
 		StatusCode: rsp.StatusCode,
@@ -104,5 +98,46 @@ func main() {
 	traceContext := tx.TraceContext()
 	tx.End()
 	flush(apm.DefaultTracer)
-	log.Printf("%s/app/apm#/link-to/trace/%s\n", *kibana, traceContext.Trace.String())
+	traceID := traceContext.Trace.String()
+	log.Println(rsp.Proto, rsp.Status, traceID)
+
+	return traceID, nil
+}
+
+func (c *client) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	traceID, err := c.fetch(http.MethodGet, r.FormValue("dst"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Write([]byte(traceID))
+}
+
+func main() {
+	headers := headerFlag(http.Header{})
+	flag.Var(headers, "H", "key=value header, can be passed more than once")
+	addr := flag.String("addr", "localhost:1234", "listen addr")
+	daemonize := flag.Bool("d", false, "daemonize and wait for requests")
+	method := flag.String("X", http.MethodGet, "HTTP method")
+	flag.Parse()
+
+	c := newClient()
+	c.headers = http.Header(headers)
+
+	if *daemonize {
+		srv := http.Server{
+			Addr:    *addr,
+			Handler: c,
+		}
+		log.Printf("listening for requets on http://%s", *addr)
+		srv.ListenAndServe()
+		return
+	}
+
+	if flag.NArg() == 0 {
+		fmt.Printf("usage: %s [options] url\n", os.Args[0])
+		os.Exit(1)
+	}
+	dst := flag.Arg(0)
+	c.fetch(*method, dst)
 }
