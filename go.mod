@@ -12,6 +12,6 @@ require (
 	github.com/prometheus/procfs v0.7.3 // indirect
 	go.elastic.co/apm v1.14.0
 	go.elastic.co/apm/module/apmhttp v1.14.0
-	golang.org/x/sys v0.0.0-20211123173158-ef496fb156ab // indirect
-	howett.net/plist v0.0.0-20201203080718-1454fab16a06 // indirect
+	go.elastic.co/apm/module/apmhttp/v2 v2.1.0 // indirect
+	go.elastic.co/apm/v2 v2.1.0 // indirect
 )

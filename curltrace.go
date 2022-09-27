@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"go.elastic.co/apm"
-	"go.elastic.co/apm/module/apmhttp"
+	"go.elastic.co/apm/module/apmhttp/v2"
+	"go.elastic.co/apm/v2"
 )
 
 func flush(tracer *apm.Tracer) {
@@ -74,7 +74,7 @@ func (c *client) fetch(method, dst string) (string, error) {
 		base = dst
 	}
 
-	tx := apm.DefaultTracer.StartTransaction(fmt.Sprintf("%s %s", method, base), "request")
+	tx := apm.DefaultTracer().StartTransaction(fmt.Sprintf("%s %s", method, base), "request")
 	ctx := apm.ContextWithTransaction(context.Background(), tx)
 	req, _ := http.NewRequestWithContext(ctx, method, dst, nil)
 	for k, vs := range c.headers {
@@ -97,7 +97,7 @@ func (c *client) fetch(method, dst string) (string, error) {
 
 	traceContext := tx.TraceContext()
 	tx.End()
-	flush(apm.DefaultTracer)
+	flush(apm.DefaultTracer())
 	traceID := traceContext.Trace.String()
 	log.Println(rsp.Proto, rsp.Status, traceID)
 
