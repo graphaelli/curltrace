@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,9 +10,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"github.com/graphaelli/go-flag-http-headers"
 	"go.elastic.co/apm/module/apmhttp/v2"
 	"go.elastic.co/apm/v2"
 )
@@ -34,21 +33,6 @@ func flush(tracer *apm.Tracer) {
 			return
 		}
 	}
-}
-
-type headerFlag http.Header
-
-func (f headerFlag) String() string {
-	return ""
-}
-
-func (f headerFlag) Set(s string) error {
-	i := strings.IndexRune(s, '=')
-	if i < 0 {
-		return errors.New("missing '='; expected format k=v")
-	}
-	http.Header(f).Add(s[:i], s[i+1:])
-	return nil
 }
 
 type client struct {
@@ -114,15 +98,15 @@ func (c *client) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	headers := headerFlag(http.Header{})
-	flag.Var(headers, "H", "key=value header, can be passed more than once")
+	hf := headerflag.New()
+	flag.Var(hf, "H", "key=value header, can be passed more than once")
 	addr := flag.String("addr", "localhost:1234", "listen addr")
 	daemonize := flag.Bool("d", false, "daemonize and wait for requests")
 	method := flag.String("X", http.MethodGet, "HTTP method")
 	flag.Parse()
 
 	c := newClient()
-	c.headers = http.Header(headers)
+	c.headers = hf.Headers()
 
 	if *daemonize {
 		srv := http.Server{

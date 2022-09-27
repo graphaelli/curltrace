@@ -7,6 +7,7 @@ require (
 	github.com/elastic/go-licenser v0.4.0 // indirect
 	github.com/elastic/go-sysinfo v1.7.1 // indirect
 	github.com/elastic/go-windows v1.0.1 // indirect
+	github.com/graphaelli/go-flag-http-headers v0.0.0-20220923025216-f7c9a98c0e81 // indirect
 	github.com/jcchavezs/porto v0.4.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/procfs v0.7.3 // indirect
