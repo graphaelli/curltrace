@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
@@ -120,6 +121,7 @@ func main() {
 	err = func(ctx context.Context) error {
 		ctx, span := tr.Start(ctx, fmt.Sprintf("curl %s", url), trace.WithAttributes(semconv.PeerService("Remote HTTP Service")))
 		defer span.End()
+		span.SetAttributes(attribute.String("transaction.type", "request"))
 		traceID = span.SpanContext().TraceID()
 
 		var bodyReader io.Reader
